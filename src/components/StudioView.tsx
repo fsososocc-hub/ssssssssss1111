@@ -23,9 +23,17 @@ import {
   Film,
   SplitSquareVertical,
   ArrowLeftRight,
+  UserCheck,
+  Palette,
+  Pin,
 } from 'lucide-react';
 import { Asset, ChatMessage, ToolType } from '../types/index.ts';
 import { AssetPickerModal } from './AssetPickerModal.tsx';
+import { BaseModelModal } from './BaseModelModal.tsx';
+import { FloatingPantonePicker } from './FloatingPantonePicker.tsx';
+import { DesignMoodboard } from './DesignMoodboard.tsx';
+import { PRESET_BASE_MODELS, BaseModel } from '../data/baseModels.ts';
+import { PantoneColor } from '../data/pantoneColors.ts';
 
 interface StudioViewProps {
   conversationId: string;
@@ -48,6 +56,7 @@ interface StudioViewProps {
   onCompareAsset?: (asset: Asset, original?: Asset | null) => void;
   onSelectForEdit: (asset: Asset) => void;
   recentAssets: Asset[];
+  models?: BaseModel[];
 }
 
 export const StudioView: React.FC<StudioViewProps> = ({
@@ -60,7 +69,9 @@ export const StudioView: React.FC<StudioViewProps> = ({
   onCompareAsset,
   onSelectForEdit,
   recentAssets,
+  models,
 }) => {
+  const activeModels = models && models.length > 0 ? models : PRESET_BASE_MODELS;
   const [inputText, setInputText] = useState('');
   const [attachments, setAttachments] = useState<string[]>([]);
   const [activeIntent, setActiveIntent] = useState<ToolType | undefined>(undefined);
@@ -70,6 +81,17 @@ export const StudioView: React.FC<StudioViewProps> = ({
   const [garmentImage, setGarmentImage] = useState<string | null>(null);
   const [modelImage, setModelImage] = useState<string | null>(null);
   const [sourceImage, setSourceImage] = useState<string | null>(null);
+
+  // Initialize with default calibrated model if available
+  useEffect(() => {
+    if (!modelImage && activeModels.length > 0) {
+      const defaultM = activeModels.find((m) => m.isDefault) || activeModels[0];
+      if (defaultM) {
+        setModelImage(defaultM.url);
+        setSelectedBaseModel(defaultM);
+      }
+    }
+  }, [models]);
   const [designRefImage, setDesignRefImage] = useState<string | null>(null);
   const [videoRefImage, setVideoRefImage] = useState<string | null>(null);
 
@@ -114,8 +136,129 @@ export const StudioView: React.FC<StudioViewProps> = ({
   >(null);
   const [pickerTitle, setPickerTitle] = useState('');
 
+  // Base model modal state
+  const [baseModelModalOpen, setBaseModelModalOpen] = useState(false);
+  const [baseModelModalPurpose, setBaseModelModalPurpose] = useState<'tryon' | 'photoshoot'>('tryon');
+  const [selectedBaseModel, setSelectedBaseModel] = useState<BaseModel | null>(null);
+
   const [expandedTaskIds, setExpandedTaskIds] = useState<Record<string, boolean>>({});
   const [savedToLibraryStatus, setSavedToLibraryStatus] = useState<Record<string, boolean>>({});
+
+  // Floating Pantone Color Picker state
+  const [isPantoneOpen, setIsPantoneOpen] = useState(false);
+
+  // Injects Pantone specification directly into the natural language prompt & active task parameters
+  const handleInjectPantoneColor = (color: PantoneColor) => {
+    const pantoneTag = `【指定面料色彩：${color.code} (${color.nameZh} ${color.hex})】`;
+    setInputText((prev) => {
+      if (prev.includes('【指定面料色彩：')) {
+        return prev.replace(/【指定面料色彩：[^】]+】/g, pantoneTag);
+      }
+      return prev.trim() ? `${prev.trim()} ${pantoneTag}` : pantoneTag;
+    });
+
+    if (activeIntent === 'image_refine_color') {
+      setSelectedColorHex(color.hex);
+      setSelectedColorName(`${color.nameZh} (${color.code})`);
+      setCustomColorText(`${color.code} ${color.nameZh} ${color.hex}`);
+    }
+
+    if (textareaRef.current) {
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+          textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 192)}px`;
+        }
+      }, 50);
+    }
+  };
+
+  const handleApplyPantoneToRefine = (color: PantoneColor) => {
+    setActiveIntent('image_refine_color');
+    setSelectedColorHex(color.hex);
+    setSelectedColorName(`${color.nameZh} (${color.code})`);
+    setCustomColorText(`${color.code} ${color.nameZh} ${color.hex}`);
+    handleInjectPantoneColor(color);
+  };
+
+  // Slide-over Design Moodboard states
+  const [isMoodboardOpen, setIsMoodboardOpen] = useState(false);
+  const [moodboardItems, setMoodboardItems] = useState<Asset[]>(() => {
+    try {
+      const saved = localStorage.getItem('modagpt_moodboard_items');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Moodboard load notice:', e);
+    }
+    return [];
+  });
+
+  // Persist moodboard to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('modagpt_moodboard_items', JSON.stringify(moodboardItems));
+    } catch (e) {
+      console.warn('Moodboard save notice:', e);
+    }
+  }, [moodboardItems]);
+
+  const handlePinAssetToMoodboard = (asset: Asset) => {
+    setMoodboardItems((prev) => {
+      const exists = prev.some((a) => a.id === asset.id || a.url === asset.url);
+      if (exists) return prev;
+      return [asset, ...prev];
+    });
+  };
+
+  const handleRemoveMoodboardItem = (id: string) => {
+    setMoodboardItems((prev) => prev.filter((item) => item.id !== id && item.url !== id));
+  };
+
+  const handleClearMoodboard = () => {
+    setMoodboardItems([]);
+  };
+
+  const handleUseAsReference = (asset: Asset) => {
+    setDesignRefImage(asset.url);
+    setAttachments((prev) => (prev.includes(asset.url) ? prev : [...prev, asset.url]));
+    const tag = `【灵感参考：${asset.name}】`;
+    setInputText((prev) => (prev.includes(tag) ? prev : prev.trim() ? `${prev.trim()} ${tag}` : tag));
+  };
+
+  const handleUseAsGarment = (asset: Asset) => {
+    setGarmentImage(asset.url);
+    setActiveIntent('virtual_tryon');
+  };
+
+  const handleUseAsModel = (asset: Asset) => {
+    setModelImage(asset.url);
+    setSelectedBaseModel(null);
+    if (activeIntent !== 'model_photoshoot' && activeIntent !== 'virtual_tryon') {
+      setActiveIntent('virtual_tryon');
+    }
+  };
+
+  const handleUseForColorRefine = (asset: Asset) => {
+    setSourceImage(asset.url);
+    setActiveIntent('image_refine_color');
+  };
+
+  const handleInjectAllReferences = () => {
+    if (moodboardItems.length === 0) return;
+    const urls = moodboardItems.map((m) => m.url);
+    setAttachments((prev) => {
+      const combined = [...prev];
+      urls.forEach((u) => {
+        if (!combined.includes(u)) combined.push(u);
+      });
+      return combined;
+    });
+    const batchTag = `【已关联灵感板 ${moodboardItems.length} 张参考图】`;
+    setInputText((prev) => (prev.includes(batchTag) ? prev : prev.trim() ? `${prev.trim()} ${batchTag}` : batchTag));
+  };
 
   // File input refs
   const garmentInputRef = useRef<HTMLInputElement>(null);
@@ -171,16 +314,18 @@ export const StudioView: React.FC<StudioViewProps> = ({
     },
   ];
 
-  // 8款经典成衣色板
+  // 10款经典奢侈成衣 Pantone FHI 标准色板
   const luxuryColors = [
-    { name: '纯深黑', hex: '#1A1A1A' },
-    { name: '深海蓝', hex: '#1C2D4E' },
-    { name: '经典驼色', hex: '#B88B5F' },
-    { name: '鼠尾草绿', hex: '#7A8E7D' },
-    { name: '象牙柔白', hex: '#F5F2EB' },
-    { name: '勃艮第酒红', hex: '#6E1A29' },
-    { name: '焦糖暖棕', hex: '#A45A2A' },
-    { name: '莫兰迪灰', hex: '#8E9196' },
+    { name: '纯深黑', hex: '#18191C', pantone: '19-4008 TCX' },
+    { name: '经典驼色', hex: '#C29B6E', pantone: '16-1325 TCX' },
+    { name: '鼠尾草绿', hex: '#8E9E8C', pantone: '16-0110 TCX' },
+    { name: '深海蓝', hex: '#182644', pantone: '19-3921 TCX' },
+    { name: '酒红勃艮第', hex: '#6C202E', pantone: '19-1650 TCX' },
+    { name: '象牙柔白', hex: '#F5F2E8', pantone: '11-0601 TCX' },
+    { name: '军绿橄榄', hex: '#545C3E', pantone: '18-0527 TCX' },
+    { name: '烟粉莫兰迪', hex: '#CAA8A8', pantone: '14-1506 TCX' },
+    { name: '雾霾蓝', hex: '#7A91A2', pantone: '15-4008 TCX' },
+    { name: '焦糖暖棕', hex: '#A87040', pantone: '18-1033 TCX' },
   ];
 
   const handleSelectFeature = (item: (typeof coreFeatures)[0]) => {
@@ -393,7 +538,6 @@ export const StudioView: React.FC<StudioViewProps> = ({
   };
 
   const hasMessages = messages.length > 0;
-  const genuineRecentAssets = recentAssets.slice(0, 3);
 
   // Dynamic Input Panels for the 5 Core Functions
   const renderDynamicInputPanel = () => {
@@ -402,14 +546,17 @@ export const StudioView: React.FC<StudioViewProps> = ({
     // 1. AI 设计 Panel
     if (activeIntent === 'fashion_design') {
       const categories = ['外套/大衣', '高级西装', '礼服裙装', '真丝衬衫', '羊绒针织', '风衣夹克'];
-      const styles = ['极简高定', '新中式典雅', '先锋剪裁', '摩登商务', '法式复古'];
-      const fabrics = ['100%山羊绒', '高支精纺羊毛', '重磅真丝', '天然亚麻', '醋酸缎面'];
-      const silhouettes = ['直筒H型', '收腰X型', '伞摆A型', 'Oversized宽松'];
+      const styles = ['极简高定', '新中式典雅', '先锋解构', '摩登商务', '法式复古'];
+      const fabrics = ['100%山羊绒(15.5μm)', '英国精纺羊毛130s', '重磅桑蚕真丝(40姆米)', '天然雨露麻', '醋酸重缎'];
+      const silhouettes = ['直筒H型', '收腰X型', '伞摆A型', 'Oversized廓形', '茧型落肩'];
 
       return (
         <div className="border border-gray-200 rounded-lg p-3.5 bg-gray-50/70 space-y-3 transition-all text-left">
           <div className="flex items-center justify-between pb-1.5 border-b border-gray-200">
-            <span className="text-xs font-semibold text-gray-900">AI 设计 · 创作配置</span>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-semibold text-gray-900">AI 设计 · 工业双向 CAD 制版规范</span>
+              <span className="text-[10px] text-gray-400 bg-white border border-gray-200 px-1.5 py-0.2 rounded font-mono">1:10 工业生产基准</span>
+            </div>
             <div className="flex items-center space-x-2">
               <button
                 type="button"
@@ -603,8 +750,8 @@ export const StudioView: React.FC<StudioViewProps> = ({
         <div className="border border-gray-200 rounded-lg p-3.5 bg-gray-50/70 space-y-3 transition-all text-left">
           <div className="flex items-center justify-between pb-1.5 border-b border-gray-200">
             <div className="flex items-center space-x-2">
-              <span className="text-xs font-semibold text-gray-900">AI 换衣 · 试衣素材配置</span>
-              <span className="text-[11px] text-gray-500">（两张均为必填项）</span>
+              <span className="text-xs font-semibold text-gray-900">AI 换衣 · 多维自适应对齐与多模态质检</span>
+              <span className="text-[10px] text-gray-400 bg-white border border-gray-200 px-1.5 py-0.2 rounded font-mono">双素材必选</span>
             </div>
             <div className="flex items-center space-x-2">
               <button
@@ -699,9 +846,16 @@ export const StudioView: React.FC<StudioViewProps> = ({
             {/* Box B: 模特照片 */}
             <div className="border border-gray-200 bg-white rounded p-3 flex flex-col justify-between min-h-[140px]">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-gray-900">
-                  模特照片 <span className="text-red-500">*</span>
-                </span>
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs font-medium text-gray-900">
+                    模特照片 <span className="text-red-500">*</span>
+                  </span>
+                  {selectedBaseModel && (
+                    <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.2 rounded">
+                      打底: {selectedBaseModel.code}
+                    </span>
+                  )}
+                </div>
                 {modelImage && (
                   <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.2 rounded font-medium">
                     已就绪
@@ -710,35 +864,91 @@ export const StudioView: React.FC<StudioViewProps> = ({
               </div>
 
               {modelImage ? (
-                <div className="relative aspect-video w-full rounded bg-gray-50 overflow-hidden group border border-gray-100 flex items-center justify-center">
-                  <img src={modelImage} alt="模特素材" className="w-full h-full object-contain" />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => modelInputRef.current?.click()}
-                      className="px-2 py-1 bg-white text-black text-[11px] rounded"
-                    >
-                      更换
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setModelImage(null)}
-                      className="px-2 py-1 bg-red-600 text-white text-[11px] rounded"
-                    >
-                      移除
-                    </button>
+                <div className="space-y-2">
+                  <div className="relative aspect-video w-full rounded bg-gray-50 overflow-hidden group border border-gray-100 flex items-center justify-center">
+                    <img src={modelImage} alt="模特素材" className="w-full h-full object-contain" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBaseModelModalPurpose('tryon');
+                          setBaseModelModalOpen(true);
+                        }}
+                        className="px-2 py-1 bg-white text-black text-[11px] rounded font-medium"
+                      >
+                        选打底模
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => modelInputRef.current?.click()}
+                        className="px-2 py-1 bg-white text-black text-[11px] rounded"
+                      >
+                        换本地
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setModelImage(null);
+                          setSelectedBaseModel(null);
+                        }}
+                        className="px-2 py-1 bg-red-600 text-white text-[11px] rounded"
+                      >
+                        移除
+                      </button>
+                    </div>
+                  </div>
+                  {/* Quick switch chips even when an image is loaded */}
+                  <div className="flex items-center space-x-1 overflow-x-auto py-0.5">
+                    <span className="text-[10px] text-gray-400 shrink-0">速换打底：</span>
+                    {activeModels.map((m) => {
+                      const isCurrent = modelImage === m.url;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setModelImage(m.url);
+                            setSelectedBaseModel(m);
+                          }}
+                          className={`inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] transition-colors shrink-0 ${
+                            isCurrent
+                              ? 'bg-black text-white font-medium'
+                              : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                          }`}
+                        >
+                          <img src={m.thumbnailUrl} alt={m.name} className="w-3.5 h-3.5 rounded-full object-cover" />
+                          <span>{m.code}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-gray-200 rounded p-3 space-y-2">
-                  <span className="text-[11px] text-gray-400">全身或半身人像照片</span>
-                  <div className="flex items-center space-x-2">
+                <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-gray-200 rounded p-3 space-y-2.5">
+                  <span className="text-[11px] text-gray-400">选用系统预置商业模特或上传</span>
+                  
+                  {/* Main Actions */}
+                  <div className="flex flex-wrap items-center justify-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBaseModelModalPurpose('tryon');
+                        setBaseModelModalOpen(true);
+                      }}
+                      className="inline-flex items-center px-2.5 py-1 bg-black text-white hover:bg-gray-800 rounded text-xs font-medium transition-colors"
+                    >
+                      <UserCheck className="w-3 h-3 mr-1 text-[#07C2E3]" />
+                      选择打底模特
+                    </button>
                     <input
                       type="file"
                       ref={modelInputRef}
                       onChange={(e) => {
                         const f = e.target.files?.[0];
-                        if (f) readFileAsDataUrl(f, setModelImage);
+                        if (f) {
+                          readFileAsDataUrl(f, setModelImage);
+                          setSelectedBaseModel(null);
+                        }
                         e.target.value = '';
                       }}
                       accept="image/*"
@@ -747,7 +957,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
                     <button
                       type="button"
                       onClick={() => modelInputRef.current?.click()}
-                      className="inline-flex items-center px-2.5 py-1 bg-white border border-gray-200 hover:border-gray-400 rounded text-xs text-gray-700"
+                      className="inline-flex items-center px-2 py-1 bg-white border border-gray-200 hover:border-gray-400 rounded text-xs text-gray-700"
                     >
                       <Upload className="w-3 h-3 mr-1" />
                       本地上传
@@ -755,11 +965,31 @@ export const StudioView: React.FC<StudioViewProps> = ({
                     <button
                       type="button"
                       onClick={() => openAssetPicker('model', '从素材库选择模特照片')}
-                      className="inline-flex items-center px-2.5 py-1 bg-white border border-gray-200 hover:border-gray-400 rounded text-xs text-gray-700"
+                      className="inline-flex items-center px-2 py-1 bg-white border border-gray-200 hover:border-gray-400 rounded text-xs text-gray-700"
                     >
                       <FolderOpen className="w-3 h-3 mr-1" />
                       素材库
                     </button>
+                  </div>
+
+                  {/* 1-Click Fast Model Chips */}
+                  <div className="flex items-center space-x-1.5 pt-0.5 overflow-x-auto max-w-full">
+                    <span className="text-[10px] text-gray-400 shrink-0">快捷模特：</span>
+                    {activeModels.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setModelImage(m.url);
+                          setSelectedBaseModel(m);
+                        }}
+                        title={`${m.name} (${m.height} | ${m.measurements})`}
+                        className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded border border-gray-200 hover:border-black text-[10px] bg-white text-gray-700 hover:text-black shrink-0 transition-colors"
+                      >
+                        <img src={m.thumbnailUrl} alt={m.name} className="w-3.5 h-3.5 rounded-full object-cover" />
+                        <span className="font-medium">{m.code}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}
@@ -834,21 +1064,24 @@ export const StudioView: React.FC<StudioViewProps> = ({
 
     // 3. AI 棚拍 Panel
     if (activeIntent === 'model_photoshoot') {
-      const scenes = ['纯白无影棚', '浅灰影棚', '室内空间', '户外场景', '高级时装画册'];
-      const poses = ['全身站姿', '半身近景', '正面肖像', '侧身微转', '行走动态'];
+      const scenes = ['纯白无影棚', '高级水泥灰棚', '米兰室内公馆', '巴黎街景漫步', '高定时装画册'];
+      const poses = ['全身挺拔站姿', '3/4侧身回眸', '动态阔步前行', '半身特写构图', '坐姿优雅折叠'];
       const lightings = [
-        '柔和棚灯 (5600K电商柔光)',
-        '明暗对比大片光',
-        '自然光',
-        '电商商品摄影',
-        '时装编辑摄影',
+        '5600K 纯白商业柔光 (电商标准)',
+        '伦勃朗 45° 电影级高反差',
+        '黄金时刻柔和暖日光 (度假系列)',
+        '环形无影柔光 (微距细节特写)',
+        '顶置大型柔光箱 (均匀漫反射)',
       ];
-      const ratios = ['3:4 商业画册', '1:1 正方形', '9:16 全身竖屏'];
+      const ratios = ['3:4 商业画册', '1:1 正方画幅', '9:16 全身竖屏', '16:9 横画幅大片'];
 
       return (
         <div className="border border-gray-200 rounded-lg p-3.5 bg-gray-50/70 space-y-3 transition-all text-left">
           <div className="flex items-center justify-between pb-1.5 border-b border-gray-200">
-            <span className="text-xs font-semibold text-gray-900">AI 棚拍 · 商业摄影配置</span>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-semibold text-gray-900">AI 棚拍 · 哈苏 100MP 商业画册影棚</span>
+              <span className="text-[10px] text-gray-400 bg-white border border-gray-200 px-1.5 py-0.2 rounded font-mono">DCI-P3 商业色域</span>
+            </div>
             <button
               type="button"
               onClick={() => setActiveIntent(undefined)}
@@ -918,6 +1151,60 @@ export const StudioView: React.FC<StudioViewProps> = ({
 
             {/* Model & Lighting */}
             <div className="sm:col-span-2 space-y-2">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] text-gray-500 font-medium">出镜模特打底：</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBaseModelModalPurpose('photoshoot');
+                      setBaseModelModalOpen(true);
+                    }}
+                    className="text-[10px] text-gray-800 hover:text-black flex items-center underline"
+                  >
+                    <UserCheck className="w-3 h-3 mr-0.5 text-[#07C2E3]" />
+                    浏览打底模特库
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModelImage(null);
+                      setSelectedBaseModel(null);
+                    }}
+                    className={`px-2 py-0.5 rounded text-[11px] border ${
+                      !modelImage
+                        ? 'bg-black text-white border-black font-medium'
+                        : 'bg-white border-gray-200 text-gray-700 hover:border-gray-400'
+                    }`}
+                  >
+                    智能意图生成
+                  </button>
+                  {activeModels.map((m) => {
+                    const isSelected = modelImage === m.url;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setModelImage(m.url);
+                          setSelectedBaseModel(m);
+                        }}
+                        className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] border transition-colors ${
+                          isSelected
+                            ? 'bg-black text-white border-black font-medium'
+                            : 'bg-white border-gray-200 text-gray-700 hover:border-gray-400'
+                        }`}
+                      >
+                        <img src={m.thumbnailUrl} alt={m.name} className="w-3.5 h-3.5 rounded-full object-cover" />
+                        <span>{m.code}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div>
                 <span className="text-[11px] text-gray-500 font-medium block mb-1">场景选择：</span>
                 <div className="flex flex-wrap gap-1.5">
@@ -1080,8 +1367,11 @@ export const StudioView: React.FC<StudioViewProps> = ({
 
             {/* Color Palette & Custom Input */}
             <div className="sm:col-span-2 space-y-2 text-xs">
-              <span className="text-[11px] text-gray-500 font-medium block">经典成衣色板：</span>
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-gray-500 font-medium">经典成衣 Pantone FHI 标准色板：</span>
+                <span className="text-[10px] text-gray-400">100% 锁定面料纹理与光影</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
                 {luxuryColors.map((col) => {
                   const isPicked = selectedColorName === col.name;
                   return (
@@ -1091,33 +1381,56 @@ export const StudioView: React.FC<StudioViewProps> = ({
                       onClick={() => {
                         setSelectedColorHex(col.hex);
                         setSelectedColorName(col.name);
-                        setCustomColorText('');
+                        setCustomColorText(col.pantone);
                       }}
-                      className={`flex items-center space-x-1.5 p-1 rounded border transition-colors ${
+                      className={`flex flex-col items-start p-1.5 rounded border transition-colors ${
                         isPicked
-                          ? 'border-black bg-gray-100 ring-1 ring-black'
+                          ? 'border-black bg-gray-50 ring-1 ring-black'
                           : 'border-gray-200 bg-white hover:border-gray-400'
                       }`}
                     >
-                      <span
-                        className="w-3.5 h-3.5 rounded-full shrink-0 border border-gray-300"
-                        style={{ backgroundColor: col.hex }}
-                      />
-                      <span className="text-[11px] truncate text-gray-800">{col.name}</span>
+                      <div className="flex items-center space-x-1.5 w-full mb-0.5">
+                        <span
+                          className="w-3.5 h-3.5 rounded-full shrink-0 border border-gray-300"
+                          style={{ backgroundColor: col.hex }}
+                        />
+                        <span className="text-[11px] font-medium truncate text-gray-900">{col.name}</span>
+                      </div>
+                      <span className="text-[9px] text-gray-400 font-mono truncate">{col.pantone}</span>
                     </button>
                   );
                 })}
               </div>
 
               <div className="flex items-center space-x-2 pt-1">
-                <span className="text-[11px] text-gray-500 shrink-0">自定义颜色/色号：</span>
-                <input
-                  type="text"
-                  value={customColorText}
-                  onChange={(e) => setCustomColorText(e.target.value)}
-                  placeholder="例如: 深酒红、奶油白、Pantone 19-3911..."
-                  className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs outline-none focus:border-black bg-white"
-                />
+                <span className="text-[11px] text-gray-500 shrink-0">自定义颜色/色阶：</span>
+                <div className="flex items-center space-x-1.5 flex-1">
+                  <input
+                    type="color"
+                    value={selectedColorHex || '#18191c'}
+                    onChange={(e) => {
+                      setSelectedColorHex(e.target.value);
+                      setSelectedColorName('自定义高定色');
+                      setCustomColorText(e.target.value);
+                    }}
+                    className="w-7 h-7 p-0 border border-gray-200 rounded cursor-pointer bg-white"
+                    title="点击调出色盘"
+                  />
+                  <input
+                    type="text"
+                    value={customColorText}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCustomColorText(v);
+                      if (/^#?[0-9a-fA-F]{6}$/.test(v)) {
+                        setSelectedColorHex(v.startsWith('#') ? v : `#${v}`);
+                        setSelectedColorName('自定义高定色');
+                      }
+                    }}
+                    placeholder="输入 Hex (#C29B6E) 或 Pantone 色号..."
+                    className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs outline-none focus:border-black bg-white"
+                  />
+                </div>
               </div>
 
               <label className="flex items-center space-x-2 pt-1 cursor-pointer select-none">
@@ -1127,7 +1440,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
                   onChange={(e) => setPreserveTexture(e.target.checked)}
                   className="w-3.5 h-3.5 text-black rounded border-gray-300"
                 />
-                <span className="text-[11px] text-gray-600">锁定原始织物纹理与纽扣光影（高保真保真度）</span>
+                <span className="text-[11px] text-gray-600">锁定原始织物编织纹理、原装纽扣与明暗高光（高保真保真度）</span>
               </label>
             </div>
           </div>
@@ -1145,7 +1458,10 @@ export const StudioView: React.FC<StudioViewProps> = ({
       return (
         <div className="border border-gray-200 rounded-lg p-3.5 bg-gray-50/70 space-y-3 transition-all text-left">
           <div className="flex items-center justify-between pb-1.5 border-b border-gray-200">
-            <span className="text-xs font-semibold text-gray-900">走秀视频 · 动态时装秀创作</span>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-semibold text-gray-900">走秀视频 · 4K 60fps 动态秀场分镜与运镜</span>
+              <span className="text-[10px] text-gray-400 bg-white border border-gray-200 px-1.5 py-0.2 rounded font-mono">Veo 2.0 引擎就绪</span>
+            </div>
             <button
               type="button"
               onClick={() => setActiveIntent(undefined)}
@@ -1321,11 +1637,39 @@ export const StudioView: React.FC<StudioViewProps> = ({
         <span className="text-xs font-semibold text-gray-900 truncate">
           {conversationTitle || 'ModaGPT 创作空间'}
         </span>
-        <span className="text-[11px] text-gray-400">AI 服装设计与商业视觉创作</span>
+        <div className="flex items-center space-x-3">
+          <span className="text-[11px] text-gray-400 hidden sm:inline">AI 服装设计与商业视觉创作</span>
+          <button
+            type="button"
+            onClick={() => setIsMoodboardOpen(!isMoodboardOpen)}
+            className={`px-2.5 py-1 rounded text-xs transition-colors inline-flex items-center space-x-1.5 border ${
+              isMoodboardOpen
+                ? 'bg-black text-white border-black font-medium shadow-2xs'
+                : 'bg-white text-gray-700 border-gray-200 hover:border-gray-400 hover:text-black'
+            }`}
+            title="展开/收起设计灵感板"
+          >
+            <Pin className={`w-3.5 h-3.5 ${isMoodboardOpen ? 'text-[#07C2E3]' : 'text-gray-500'}`} />
+            <span>设计灵感板</span>
+            {moodboardItems.length > 0 && (
+              <span
+                className={`px-1.5 py-0.2 rounded text-[10px] font-mono ${
+                  isMoodboardOpen ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-800'
+                }`}
+              >
+                {moodboardItems.length}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Main Workspace Area */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col justify-between">
+      {/* Main Workspace + Slide-over Moodboard Layout */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Central Creation Column (Stream + Command Bar) */}
+        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+          {/* Workspace Central Stream */}
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col justify-between min-w-0 transition-all duration-300">
         <div className="max-w-4xl mx-auto w-full space-y-6 flex-1 flex flex-col justify-center">
           {/* 1. Empty State (Centered ChatGPT-style creation interface) */}
           {!hasMessages && (
@@ -1428,6 +1772,37 @@ export const StudioView: React.FC<StudioViewProps> = ({
                         <span>附加素材</span>
                       </button>
 
+                      <button
+                        type="button"
+                        onClick={() => setIsPantoneOpen(!isPantoneOpen)}
+                        className={`p-1.5 rounded transition-colors inline-flex items-center space-x-1 text-xs ${
+                          isPantoneOpen
+                            ? 'bg-black text-white font-medium'
+                            : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+                        }`}
+                        title="打开 Pantone 色彩库并选色注入"
+                      >
+                        <Palette className={`w-4 h-4 ${isPantoneOpen ? 'text-[#07C2E3]' : 'text-gray-500'}`} />
+                        <span>Pantone 色卡</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsMoodboardOpen(!isMoodboardOpen)}
+                        className={`p-1.5 rounded transition-colors inline-flex items-center space-x-1 text-xs ${
+                          isMoodboardOpen
+                            ? 'bg-black text-white font-medium'
+                            : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+                        }`}
+                        title="打开设计灵感板"
+                      >
+                        <Pin className={`w-4 h-4 ${isMoodboardOpen ? 'text-[#07C2E3]' : 'text-gray-500'}`} />
+                        <span>灵感板</span>
+                        {moodboardItems.length > 0 && (
+                          <span className="text-[10px] font-mono opacity-80">({moodboardItems.length})</span>
+                        )}
+                      </button>
+
                       {activeIntent && (
                         <span className="text-[11px] bg-gray-100 text-gray-800 px-2 py-0.5 rounded font-medium">
                           {coreFeatures.find((f) => f.intent === activeIntent)?.label || activeIntent}
@@ -1466,31 +1841,6 @@ export const StudioView: React.FC<StudioViewProps> = ({
                 </div>
               </div>
 
-              {/* Recent Works */}
-              {genuineRecentAssets.length > 0 && (
-                <div className="w-full max-w-[850px] pt-2">
-                  <div className="grid grid-cols-3 gap-3">
-                    {genuineRecentAssets.map((asset) => (
-                      <div
-                        key={asset.id}
-                        onClick={() => onPreviewAsset(asset)}
-                        className="border border-gray-200 hover:border-gray-400 rounded overflow-hidden cursor-pointer transition-colors bg-white group"
-                      >
-                        <div className="aspect-square bg-gray-50 overflow-hidden">
-                          <img
-                            src={asset.thumbnailUrl || asset.url}
-                            alt={asset.name}
-                            className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-150"
-                          />
-                        </div>
-                        <div className="p-1.5 text-[11px] text-gray-600 truncate border-t border-gray-100">
-                          {asset.name}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -1519,25 +1869,51 @@ export const StudioView: React.FC<StudioViewProps> = ({
                         {/* User Attachments */}
                         {msg.attachments && msg.attachments.length > 0 && (
                           <div className="flex flex-wrap gap-2 pt-1">
-                            {msg.attachments.map((att, i) => (
-                              <div key={i} className="border border-gray-200 rounded overflow-hidden">
-                                <img
-                                  src={att}
-                                  alt="用户素材"
-                                  className="w-20 h-20 object-cover cursor-pointer hover:opacity-90"
-                                  onClick={() =>
-                                    onPreviewAsset({
-                                      id: `user-att-${i}`,
-                                      name: '用户输入素材',
-                                      type: 'image',
-                                      url: att,
-                                      createdAt: Date.now(),
-                                      metadata: { tool: 'fashion_design', prompt: msg.content, version: 1 },
-                                    })
-                                  }
-                                />
-                              </div>
-                            ))}
+                            {msg.attachments.map((att, i) => {
+                              const userAttAsset: Asset = {
+                                id: `user-att-${i}-${msg.id}`,
+                                name: `用户输入素材 #${i + 1}`,
+                                type: 'image',
+                                url: att,
+                                createdAt: msg.createdAt,
+                                metadata: { tool: 'fashion_design', prompt: msg.content, version: 1 },
+                              };
+                              const isPinned = moodboardItems.some((m) => m.url === att);
+                              return (
+                                <div
+                                  key={i}
+                                  draggable={true}
+                                  onDragStart={(e) => {
+                                    e.dataTransfer.setData('application/json', JSON.stringify(userAttAsset));
+                                    e.dataTransfer.setData('text/plain', att);
+                                    e.dataTransfer.effectAllowed = 'copy';
+                                  }}
+                                  className="relative group border border-gray-200 hover:border-black rounded overflow-hidden cursor-grab active:cursor-grabbing"
+                                >
+                                  <img
+                                    src={att}
+                                    alt="用户素材"
+                                    className="w-20 h-20 object-cover cursor-pointer hover:opacity-90"
+                                    onClick={() => onPreviewAsset(userAttAsset)}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handlePinAssetToMoodboard(userAttAsset);
+                                    }}
+                                    className={`absolute bottom-1 right-1 p-1 rounded transition-opacity ${
+                                      isPinned
+                                        ? 'bg-black text-[#07C2E3] opacity-100'
+                                        : 'bg-black/75 hover:bg-black text-white opacity-0 group-hover:opacity-100'
+                                    }`}
+                                    title={isPinned ? '已固定在灵感板' : '固定至灵感板'}
+                                  >
+                                    <Pin className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -1643,7 +2019,13 @@ export const StudioView: React.FC<StudioViewProps> = ({
                             {msg.taskRecord.outputAssets.map((asset) => (
                               <div
                                 key={asset.id}
-                                className="border border-gray-200 rounded overflow-hidden bg-white group flex flex-col"
+                                draggable={true}
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData('application/json', JSON.stringify(asset));
+                                  e.dataTransfer.setData('text/plain', asset.url);
+                                  e.dataTransfer.effectAllowed = 'copy';
+                                }}
+                                className="border border-gray-200 hover:border-black rounded overflow-hidden bg-white group flex flex-col cursor-grab active:cursor-grabbing transition-colors"
                               >
                                 <div
                                   className="relative aspect-square bg-gray-50 overflow-hidden cursor-pointer"
@@ -1719,7 +2101,25 @@ export const StudioView: React.FC<StudioViewProps> = ({
                                     </button>
                                   </div>
 
-                                  <div className="pt-1 border-t border-gray-50 flex justify-end">
+                                  <div className="pt-1 border-t border-gray-50 flex items-center justify-between">
+                                    <button
+                                      type="button"
+                                      onClick={() => handlePinAssetToMoodboard(asset)}
+                                      className={`text-[11px] px-2 py-0.5 rounded border transition-colors inline-flex items-center space-x-1 ${
+                                        moodboardItems.some((m) => m.id === asset.id || m.url === asset.url)
+                                          ? 'bg-black text-white border-black font-medium'
+                                          : 'border-gray-200 text-gray-600 hover:border-black hover:text-black'
+                                      }`}
+                                      title="固定到设计灵感板作为参考"
+                                    >
+                                      <Pin className="w-3 h-3" />
+                                      <span>
+                                        {moodboardItems.some((m) => m.id === asset.id || m.url === asset.url)
+                                          ? '已固定'
+                                          : '固定灵感板'}
+                                      </span>
+                                    </button>
+
                                     <button
                                       type="button"
                                       onClick={() => handleSaveToLibrary(asset)}
@@ -1874,6 +2274,37 @@ export const StudioView: React.FC<StudioViewProps> = ({
                     <span className="hidden sm:inline">素材</span>
                   </button>
 
+                  <button
+                    type="button"
+                    onClick={() => setIsPantoneOpen(!isPantoneOpen)}
+                    className={`p-1.5 rounded transition-colors inline-flex items-center space-x-1 text-xs ${
+                      isPantoneOpen
+                        ? 'bg-black text-white font-medium'
+                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                    title="打开 Pantone 色彩库并选色注入"
+                  >
+                    <Palette className={`w-4 h-4 ${isPantoneOpen ? 'text-[#07C2E3]' : 'text-gray-500'}`} />
+                    <span className="hidden sm:inline">Pantone 色卡</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsMoodboardOpen(!isMoodboardOpen)}
+                    className={`p-1.5 rounded transition-colors inline-flex items-center space-x-1 text-xs ${
+                      isMoodboardOpen
+                        ? 'bg-black text-white font-medium'
+                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                    title="打开设计灵感板"
+                  >
+                    <Pin className={`w-4 h-4 ${isMoodboardOpen ? 'text-[#07C2E3]' : 'text-gray-500'}`} />
+                    <span className="hidden sm:inline">灵感板</span>
+                    {moodboardItems.length > 0 && (
+                      <span className="text-[10px] font-mono opacity-80">({moodboardItems.length})</span>
+                    )}
+                  </button>
+
                   {activeIntent && (
                     <span className="text-[11px] bg-gray-100 text-gray-800 px-2 py-0.5 rounded font-medium">
                       {coreFeatures.find((f) => f.intent === activeIntent)?.label || activeIntent}
@@ -1926,6 +2357,43 @@ export const StudioView: React.FC<StudioViewProps> = ({
           </div>
         </div>
       )}
+        </div>
+
+        {/* Floating Slide-over Trigger Tab when Moodboard is closed */}
+        {!isMoodboardOpen && (
+          <button
+            type="button"
+            onClick={() => setIsMoodboardOpen(true)}
+            className="hidden sm:flex absolute right-0 top-1/2 -translate-y-1/2 z-30 bg-white hover:bg-gray-50 border-l border-y border-gray-200 hover:border-gray-400 py-3 px-1.5 rounded-l-md shadow-md text-xs text-gray-700 hover:text-black flex-col items-center space-y-1 transition-all"
+            title="展开设计灵感板 (Moodboard)"
+          >
+            <Pin className="w-3.5 h-3.5 text-black" />
+            <span className="[writing-mode:vertical-rl] tracking-wider text-[11px] font-medium">灵感板</span>
+            {moodboardItems.length > 0 && (
+              <span className="w-4 h-4 rounded-full bg-black text-white text-[9px] flex items-center justify-center font-mono">
+                {moodboardItems.length}
+              </span>
+            )}
+          </button>
+        )}
+
+        {/* Slide-over Design Moodboard Panel */}
+        <DesignMoodboard
+          isOpen={isMoodboardOpen}
+          onClose={() => setIsMoodboardOpen(false)}
+          items={moodboardItems}
+          onRemoveItem={handleRemoveMoodboardItem}
+          onClearAll={handleClearMoodboard}
+          onUseAsReference={handleUseAsReference}
+          onUseAsGarment={handleUseAsGarment}
+          onUseAsModel={handleUseAsModel}
+          onUseForColorRefine={handleUseForColorRefine}
+          onCompareAsset={onCompareAsset}
+          onPreviewAsset={onPreviewAsset}
+          onDropAsset={handlePinAssetToMoodboard}
+          onInjectAllReferences={handleInjectAllReferences}
+        />
+      </div>
 
       {/* Asset Picker Modal */}
       <AssetPickerModal
@@ -1934,6 +2402,28 @@ export const StudioView: React.FC<StudioViewProps> = ({
         assets={recentAssets}
         onSelectAsset={handleAssetPicked}
         title={pickerTitle}
+      />
+
+      {/* Base Model Picker Modal */}
+      <BaseModelModal
+        isOpen={baseModelModalOpen}
+        onClose={() => setBaseModelModalOpen(false)}
+        selectedModelId={modelImage}
+        purpose={baseModelModalPurpose}
+        models={activeModels}
+        onSelectModel={(model) => {
+          setModelImage(model.url);
+          setSelectedBaseModel(model);
+        }}
+      />
+
+      {/* Floating Pantone Color Picker Widget */}
+      <FloatingPantonePicker
+        isOpen={isPantoneOpen}
+        onToggleOpen={setIsPantoneOpen}
+        onInjectColor={handleInjectPantoneColor}
+        onApplyToColorRefine={handleApplyPantoneToRefine}
+        activeIntent={activeIntent}
       />
     </div>
   );

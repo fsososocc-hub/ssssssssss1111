@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Download, RotateCw, Play, SplitSquareVertical } from 'lucide-react';
+import { X, Download, RotateCw, Play, SplitSquareVertical, Mail } from 'lucide-react';
 import { Asset, ToolType } from '../types/index.ts';
 
 interface ImagePreviewModalProps {
@@ -151,13 +151,49 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
                 </div>
               )}
 
+              {asset.metadata.colorTransform && (
+                <div>
+                  <span className="font-semibold text-gray-900 block mb-1">色彩重映射信息</span>
+                  <div className="bg-gray-50 p-2.5 rounded border border-gray-100 space-y-1 text-[11px] text-gray-600">
+                    <div>目标色彩: {asset.metadata.colorTransform.targetColor}</div>
+                    {asset.metadata.colorTransform.pantone && (
+                      <div>Pantone 色号: {asset.metadata.colorTransform.pantone}</div>
+                    )}
+                    {asset.metadata.colorTransform.targetHex && (
+                      <div className="flex items-center space-x-1.5">
+                        <span>Hex 色值:</span>
+                        <span
+                          className="w-3 h-3 rounded-full border border-gray-300 inline-block"
+                          style={{ backgroundColor: asset.metadata.colorTransform.targetHex }}
+                        />
+                        <span className="font-mono">{asset.metadata.colorTransform.targetHex}</span>
+                      </div>
+                    )}
+                    <div>织物纹理: 原始高频编织纹理 100% 锁定</div>
+                  </div>
+                </div>
+              )}
+
               {asset.metadata.fitAudit && (
                 <div>
-                  <span className="font-semibold text-gray-900 block mb-1">贴合质检评价</span>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-semibold text-gray-900">贴合质检评价</span>
+                    {asset.metadata.fitAudit.commercialGrade && (
+                      <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                        {asset.metadata.fitAudit.commercialGrade}
+                      </span>
+                    )}
+                  </div>
                   <div className="bg-gray-50 p-2.5 rounded border border-gray-100 space-y-1 text-[11px] text-gray-600">
-                    <div>贴合度: {asset.metadata.fitAudit.fitScore}%</div>
-                    <div>肩线: {asset.metadata.fitAudit.shoulderAlignment}</div>
-                    <div>垂褶: {asset.metadata.fitAudit.drapeEvaluation}</div>
+                    <div>贴合度评分: {asset.metadata.fitAudit.fitScore}%</div>
+                    <div>肩线拟合: {asset.metadata.fitAudit.shoulderAlignment}</div>
+                    <div>重力垂褶: {asset.metadata.fitAudit.drapeEvaluation}</div>
+                    {asset.metadata.fitAudit.tensionIndex && (
+                      <div>活动松量: {asset.metadata.fitAudit.tensionIndex}</div>
+                    )}
+                    {asset.metadata.fitAudit.preservationReport && (
+                      <div>细节保留: {asset.metadata.fitAudit.preservationReport}</div>
+                    )}
                   </div>
                 </div>
               )}
@@ -168,7 +204,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
               </div>
             </div>
 
-            <div className="space-y-2 pt-3 border-t border-gray-100">
+            <div className="space-y-1.5 pt-3 border-t border-gray-100">
               <button
                 onClick={() => {
                   onSelectForEdit(asset);
@@ -179,12 +215,57 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
                 <RotateCw className="w-3.5 h-3.5" />
                 <span>基于此素材继续创作</span>
               </button>
+
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={handleDownload}
+                  className="py-1.5 border border-gray-200 hover:border-gray-400 text-gray-700 hover:text-black rounded text-xs transition-colors flex items-center justify-center space-x-1"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>下载原文件</span>
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await fetch('/api/workspace/drive/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ assetId: asset.id }),
+                      });
+                      const data = await res.json();
+                      alert(data.message || '已成功保存至 Google Drive 云端设计库');
+                    } catch (e: any) {
+                      alert('保存至 Drive 失败: ' + e?.message);
+                    }
+                  }}
+                  className="py-1.5 border border-gray-200 hover:border-gray-400 text-gray-700 hover:text-black rounded text-xs transition-colors flex items-center justify-center space-x-1"
+                  title="一键同步至 Google Drive 云端"
+                >
+                  <span className="text-[#07C2E3] font-bold text-xs">G</span>
+                  <span>存至 Drive</span>
+                </button>
+              </div>
+
               <button
-                onClick={handleDownload}
-                className="w-full py-2 border border-gray-200 hover:border-gray-400 text-gray-700 hover:text-black rounded text-xs transition-colors flex items-center justify-center space-x-1.5"
+                onClick={async () => {
+                  const email = prompt('请输入收件人邮箱 (留空将发送至当前绑定邮箱):', 'fsososocc@gmail.com');
+                  if (!email) return;
+                  try {
+                    const res = await fetch('/api/workspace/gmail/send', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ recipientEmail: email, assetId: asset.id }),
+                    });
+                    const data = await res.json();
+                    alert(data.message || '设计包已通过 Gmail 发送成功');
+                  } catch (e: any) {
+                    alert('发送失败: ' + e?.message);
+                  }
+                }}
+                className="w-full py-1.5 border border-gray-200 hover:border-gray-400 text-gray-700 hover:text-black rounded text-xs transition-colors flex items-center justify-center space-x-1.5"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>下载原文件</span>
+                <Mail className="w-3.5 h-3.5 text-purple-600" />
+                <span>通过 Gmail 发送设计包与直链</span>
               </button>
             </div>
           </div>

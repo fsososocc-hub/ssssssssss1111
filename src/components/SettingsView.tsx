@@ -1,17 +1,22 @@
 import React, { useState } from 'react';
-import { User, Globe, Bell, Shield, CreditCard, Download, Trash, Check } from 'lucide-react';
+import { User, Globe, Bell, Shield, CreditCard, Download, Trash, Check, Activity } from 'lucide-react';
 import { UserSettings } from '../types/index.ts';
+import { ModelManagementSection } from './ModelManagementSection.tsx';
 
 interface SettingsViewProps {
   settings: UserSettings;
   onUpdateSettings: (newSettings: Partial<UserSettings>) => void;
   onExportData: () => void;
+  onOpenOperationsCenter?: () => void;
+  onModelsChanged?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   onUpdateSettings,
   onExportData,
+  onOpenOperationsCenter,
+  onModelsChanged,
 }) => {
   const [userName, setUserName] = useState(settings.userName);
   const [email, setEmail] = useState(settings.email);
@@ -192,7 +197,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
-          {/* 5. Data Privacy & Export */}
+          {/* 5. Model Asset Management */}
+          <ModelManagementSection onModelsChanged={onModelsChanged} />
+
+          {/* 6. Data Privacy & Export */}
           <div className="border border-gray-200 rounded p-5 space-y-3">
             <h2 className="text-sm font-semibold text-gray-900">数据管理与合规</h2>
             <p className="text-xs text-gray-500 leading-relaxed">
@@ -207,6 +215,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <Download className="w-3.5 h-3.5 mr-1.5" />
                 导出创作数据 (JSON)
               </button>
+            </div>
+          </div>
+
+          {/* 6. Operations Management System */}
+          <div className="border border-gray-200 rounded p-5 space-y-3 bg-gray-50/50">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h2 className="text-sm font-semibold text-gray-900">平台运营与服务监控控制台</h2>
+                  <span className="text-[10px] bg-black text-white px-1.5 py-0.2 rounded font-mono">INTERNAL</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  服务性能遥测、模型供应商配额、工具调用审计与生产数据库运维
+                </p>
+              </div>
+              {onOpenOperationsCenter && (
+                <button
+                  type="button"
+                  onClick={onOpenOperationsCenter}
+                  className="inline-flex items-center justify-center px-4 py-2 bg-black hover:bg-gray-800 text-white rounded text-xs font-medium transition-colors shrink-0"
+                >
+                  <Activity className="w-3.5 h-3.5 mr-1.5 text-[#07C2E3]" />
+                  <span>打开运营管理中心</span>
+                </button>
+              )}
             </div>
           </div>
 

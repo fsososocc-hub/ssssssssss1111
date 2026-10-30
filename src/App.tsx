@@ -4,17 +4,22 @@ import { StudioView } from './components/StudioView.tsx';
 import { LibraryView } from './components/LibraryView.tsx';
 import { SettingsView } from './components/SettingsView.tsx';
 import { ImagePreviewModal } from './components/ImagePreviewModal.tsx';
+import { OperationsModal } from './components/OperationsModal.tsx';
 import { Asset, ChatMessage, Conversation, UserSettings } from './types/index.ts';
+import { BaseModel, PRESET_BASE_MODELS } from './data/baseModels.ts';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<'home' | 'studio' | 'library' | 'settings'>('home');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isOperationsModalOpen, setIsOperationsModalOpen] = useState(false);
+  const [shareToast, setShareToast] = useState<string | null>(null);
 
   // Core Data
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string>('conv-init');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [models, setModels] = useState<BaseModel[]>(PRESET_BASE_MODELS);
   const [settings, setSettings] = useState<UserSettings>({
     userName: 'Moda Designer',
     email: 'fsososocc@gmail.com',
@@ -36,14 +41,26 @@ export default function App() {
   const [previewingAsset, setPreviewingAsset] = useState<Asset | null>(null);
   const [comparisonAsset, setComparisonAsset] = useState<Asset | null>(null);
 
+  const refreshModels = () => {
+    fetch('/api/models?active=true')
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setModels(data);
+        }
+      })
+      .catch((err) => console.warn('Refresh models error:', err));
+  };
+
   // Pre-load from backend API
   useEffect(() => {
     async function initData() {
       try {
-        const [convRes, assetsRes, settingsRes] = await Promise.allSettled([
+        const [convRes, assetsRes, settingsRes, modelsRes] = await Promise.allSettled([
           fetch('/api/conversations').then((r) => r.json()),
           fetch('/api/assets').then((r) => r.json()),
           fetch('/api/settings').then((r) => r.json()),
+          fetch('/api/models?active=true').then((r) => r.json()),
         ]);
 
         if (convRes.status === 'fulfilled' && Array.isArray(convRes.value)) {
@@ -57,6 +74,9 @@ export default function App() {
         }
         if (settingsRes.status === 'fulfilled' && settingsRes.value) {
           setSettings(settingsRes.value);
+        }
+        if (modelsRes.status === 'fulfilled' && Array.isArray(modelsRes.value) && modelsRes.value.length > 0) {
+          setModels(modelsRes.value);
         }
       } catch (err) {
         console.warn('Backend load notice:', err);
@@ -202,6 +222,52 @@ export default function App() {
     }
   };
 
+  const handleDeleteConversation = async (id: string) => {
+    try {
+      await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+    } catch (err) {
+      console.warn('Delete conversation failed:', err);
+    }
+    setConversations((prev) => {
+      const remaining = prev.filter((c) => c.id !== id);
+      if (activeConversationId === id) {
+        if (remaining.length > 0) {
+          setActiveConversationId(remaining[0].id);
+        } else {
+          const freshId = `conv-${Date.now()}`;
+          const freshConv: Conversation = {
+            id: freshId,
+            title: '新创作任务',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messageCount: 0,
+          };
+          setActiveConversationId(freshId);
+          setMessages([]);
+          return [freshConv];
+        }
+      }
+      return remaining;
+    });
+  };
+
+  const handleShareConversation = (conv: Conversation) => {
+    const shareUrl = `${window.location.origin}/?conv=${conv.id}`;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard
+        .writeText(shareUrl)
+        .then(() => {
+          setShareToast(`已生成并复制会话分享链接：${conv.title}`);
+          setTimeout(() => setShareToast(null), 3000);
+        })
+        .catch(() => {
+          prompt('请复制此会话分享链接：', shareUrl);
+        });
+    } else {
+      prompt('请复制此会话分享链接：', shareUrl);
+    }
+  };
+
   const handleCompareAsset = (asset: Asset, original?: Asset | null) => {
     let parent = original || null;
     if (!parent && asset.metadata.parentAssetId) {
@@ -289,7 +355,7 @@ export default function App() {
   };
 
   const activeConv = conversations.find((c) => c.id === activeConversationId);
-  const currentTitle = activeConv ? activeConv.title : 'ModaGPT 创作空间';
+  const currentTitle = activeConv ? activeConv.title : 'ModaUI 创作空间';
 
   const isStudioWorkspace = currentTab === 'home' || currentTab === 'studio';
 
@@ -314,6 +380,8 @@ export default function App() {
           setCurrentTab('studio');
         }}
         onNewConversation={handleNewConversation}
+        onDeleteConversation={handleDeleteConversation}
+        onShareConversation={handleShareConversation}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
       />
@@ -335,6 +403,7 @@ export default function App() {
             onCompareAsset={handleCompareAsset}
             onSelectForEdit={handleSelectForEdit}
             recentAssets={assets}
+            models={models}
           />
         )}
 
@@ -356,9 +425,17 @@ export default function App() {
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
             onExportData={handleExportData}
+            onOpenOperationsCenter={() => setIsOperationsModalOpen(true)}
+            onModelsChanged={refreshModels}
           />
         )}
       </main>
+
+      {/* Operations Management Modal */}
+      <OperationsModal
+        isOpen={isOperationsModalOpen}
+        onClose={() => setIsOperationsModalOpen(false)}
+      />
 
       {/* Image / Video Preview & Comparison Modal */}
       <ImagePreviewModal
@@ -370,6 +447,14 @@ export default function App() {
         }}
         onSelectForEdit={handleSelectForEdit}
       />
+
+      {/* Share Toast Notification */}
+      {shareToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-black text-white px-4 py-2.5 rounded-md text-xs shadow-lg flex items-center space-x-2 animate-in fade-in slide-in-from-bottom-2">
+          <div className="w-2 h-2 rounded-full bg-[#07C2E3]" />
+          <span>{shareToast}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -60,13 +60,27 @@ export interface Asset {
     };
     fitAudit?: {
       fitScore: number;
+      commercialGrade?: string;
       shoulderAlignment: string;
       drapeEvaluation: string;
-      preservationReport: string;
+      tensionIndex?: string;
+      preservationReport?: string;
     };
     colorTransform?: {
       targetColor: string;
+      targetHex?: string;
+      pantone?: string;
       preservedTexture: boolean;
+    };
+    modelProfile?: {
+      name: string;
+      code: string;
+      gender: string;
+      height: string;
+      measurements: string;
+      ethnicity: string;
+      pose: string;
+      lighting: string;
     };
   };
 }
@@ -120,3 +134,5 @@ export interface UserSettings {
     quotaUsed: number;
   }[];
 }
+
+export type { BaseModel } from '../data/baseModels.ts';

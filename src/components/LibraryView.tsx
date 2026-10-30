@@ -23,6 +23,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   const filters = [
     { id: 'all', label: '全部素材' },
+    { id: 'base_model', label: '打底模特' },
     { id: 'fashion_design', label: 'AI设计' },
     { id: 'virtual_tryon', label: 'AI换衣' },
     { id: 'model_photoshoot', label: 'AI棚拍' },
@@ -31,8 +32,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   ];
 
   const filteredAssets = assets.filter((asset) => {
-    if (selectedToolFilter !== 'all' && asset.metadata.tool !== selectedToolFilter) {
-      return false;
+    if (selectedToolFilter !== 'all') {
+      if (selectedToolFilter === 'base_model') {
+        const isBase = asset.id.startsWith('base-model-') || !!asset.metadata?.modelProfile;
+        if (!isBase) return false;
+      } else if (asset.metadata.tool !== selectedToolFilter) {
+        return false;
+      }
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -164,9 +170,15 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     <span className="text-xs font-medium text-gray-900 block truncate" title={asset.name}>
                       {asset.name}
                     </span>
-                    <span className="text-[10px] text-gray-400 block line-clamp-1" title={asset.metadata.prompt}>
-                      {asset.metadata.prompt || '暂无描述'}
-                    </span>
+                    {asset.metadata.modelProfile ? (
+                      <span className="text-[10px] text-blue-600 font-medium block truncate">
+                        打底模特 · {asset.metadata.modelProfile.code} ({asset.metadata.modelProfile.height})
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-gray-400 block line-clamp-1" title={asset.metadata.prompt}>
+                        {asset.metadata.prompt || '暂无描述'}
+                      </span>
+                    )}
                   </div>
 
                   <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
